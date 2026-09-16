@@ -1,0 +1,15 @@
+[Unit]
+Description=Ob'ektivka Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_SERVER_USERNAME
+WorkingDirectory=/home/YOUR_SERVER_USERNAME/objektivka_bot
+ExecStart=/home/YOUR_SERVER_USERNAME/objektivka_bot/venv/bin/python bot.py
+Restart=always
+RestartSec=5
+EnvironmentFile=/home/YOUR_SERVER_USERNAME/objektivka_bot/.env
+
+[Install]
+WantedBy=multi-user.target

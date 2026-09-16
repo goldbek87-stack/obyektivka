@@ -1,0 +1,10 @@
+services:
+  objektivka-bot:
+    build: .
+    container_name: objektivka-bot
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./tmp:/app/tmp
+      - ./output:/app/output
