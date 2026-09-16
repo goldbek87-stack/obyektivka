@@ -79,7 +79,6 @@ async def ask_current_simple_step(target, context: ContextTypes.DEFAULT_TYPE):
     idx = context.user_data["step_idx"]
     steps = T.SIMPLE_STEPS
     if idx >= len(steps):
-        # oddiy maydonlar tugadi -> mehnat fazasiga o'tamiz
         context.user_data["phase"] = "mehnat"
         await start_mehnat(target, context)
         return
@@ -124,9 +123,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ogg_path = os.path.join(TMP_DIR, f"{uuid.uuid4().hex}.ogg")
     await tg_file.download_to_drive(ogg_path)
 
-    waiting = await update.message.reply_text(
-        "⏳" if lang == T.L else "⏳"
-    )
+    waiting = await update.message.reply_text("⏳")
     text = transcribe_ogg(ogg_path)
     try:
         await waiting.delete()
@@ -154,8 +151,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
 
-    # Matn har doim to'g'ridan-to'g'ri javob sifatida qabul qilinadi
-    # (foydalanuvchi o'zi yozgani uchun tasdiqlash shart emas)
     context.user_data.pop("pending_text", None)
     await save_answer_and_advance(update, context, text)
 
@@ -174,16 +169,11 @@ async def on_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     lang = lang_of(context)
     await query.message.reply_text(T.EDIT_ASK_TEXT[lang])
-    # keyingi matn xabari to'g'ridan-to'g'ri handle_text orqali qabul qilinadi
 
 
 # ============================== MARKAZIY DISPATCH ============================
 
 async def save_answer_and_advance(target, context: ContextTypes.DEFAULT_TYPE, text: str):
-    """
-    target: Update (matn holatida) yoki CallbackQuery (tasdiqlash holatida) —
-    ikkalasida ham .message orqali javob yozish mumkin.
-    """
     phase = context.user_data.get("phase")
 
     if phase == "simple":
@@ -350,7 +340,7 @@ async def on_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["current_relative_col"] = label_col
     spec = _current_spec(context)
     base_label = spec["label"][0] if lang == T.L else spec["label"][1]
-    context.user_data["current_relative_label"] = f"{label_col} ({base_label.lower()})" if lang == T.L else f"{label_col} ({base_label.lower()})"
+    context.user_data["current_relative_label"] = f"{label_col} ({base_label.lower()})"
     await ask_relative_field(query, context)
 
 
@@ -368,7 +358,6 @@ async def relative_save_field(target, context: ContextTypes.DEFAULT_TYPE, text: 
         await ask_relative_field(target, context)
         return
 
-    # yozuv tugadi -> ro'yxatga qo'shamiz
     entry = context.user_data["current_relative"]
     if spec.get("ask_gender"):
         col = context.user_data.get("current_relative_col", spec["label"][0])
@@ -431,101 +420,4 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     with open(out_path, "rb") as f:
-        await update.message.reply_document(f, filename=os.path.basename(out_path))
-
-    await update.message.reply_text(T.DONE_MSG[lang])
-    context.user_data["phase"] = "done"
-
-    for p in (photo_path, out_path):
-        try:
-            os.remove(p)
-        except OSError:
-            pass
-
-
-async def photo_phase_wrong_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get("phase") == "photo":
-        lang = lang_of(context)
-        await update.message.reply_text(T.PHOTO_WAIT_HINT[lang])
-
-
-# ============================== MAIN =========================================
-
-async def health(request):
-    return web.Response(text="OK")
-
-
-async def telegram_webhook_handler(request):
-    application = request.app["telegram_app"]
-    data = await request.json()
-    update = Update.de_json(data, application.bot)
-    await application.process_update(update)
-    return web.Response(text="OK")
-
-
-async def run_webhook_mode(application: Application):
-    await application.initialize()
-    await application.start()
-
-    webhook_url = f"{WEBHOOK_HOST}/{BOT_TOKEN}"
-    await application.bot.set_webhook(url=webhook_url)
-    logger.info("Webhook o'rnatildi: %s", webhook_url)
-
-    aio_app = web.Application()
-    aio_app["telegram_app"] = application
-    aio_app.router.add_get("/", health)
-    aio_app.router.add_post(f"/{BOT_TOKEN}", telegram_webhook_handler)
-
-    runner = web.AppRunner(aio_app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
-    logger.info("Webhook server %s portda ishga tushdi", PORT)
-
-    # Dastur to'xtamasdan ishlab tursin
-    while True:
-        await asyncio.sleep(3600)
-
-
-def build_application() -> Application:
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", cmd_start))
-
-    app.add_handler(CallbackQueryHandler(on_lang_choice, pattern="^lang_"))
-    app.add_handler(CallbackQueryHandler(on_quick_no, pattern="^quickno$"))
-    app.add_handler(CallbackQueryHandler(on_confirm, pattern="^confirm$"))
-    app.add_handler(CallbackQueryHandler(on_edit, pattern="^edit$"))
-    app.add_handler(CallbackQueryHandler(on_mehnat_more, pattern="^mehnat_more_"))
-    app.add_handler(CallbackQueryHandler(on_presence, pattern="^presence_"))
-    app.add_handler(CallbackQueryHandler(on_gender, pattern="^gender_"))
-    app.add_handler(CallbackQueryHandler(on_relative_more, pattern="^rel_more_"))
-
-    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(MessageHandler(
-        filters.Document.ALL & ~filters.COMMAND, photo_phase_wrong_type
-    ))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    return app
-
-
-def main():
-    if not BOT_TOKEN:
-        raise RuntimeError(
-            "BOT_TOKEN topilmadi. .env faylga BOT_TOKEN=... deb yozing "
-            "(.env.example faylga qarang)."
-        )
-
-    application = build_application()
-
-    if WEBHOOK_HOST:
-        logger.info("WEBHOOK rejimida ishga tushmoqda (Render va h.k. uchun)...")
-        asyncio.run(run_webhook_mode(application))
-    else:
-        logger.info("POLLING rejimida ishga tushmoqda (uy kompyuteri/VPS uchun)...")
-        application.run_polling()
-
-
-if __name__ == "__main__":
-    main()
+        await update.message.reply_document(f,
