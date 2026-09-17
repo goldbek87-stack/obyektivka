@@ -244,6 +244,21 @@ PRESENCE_PROMPT = {
     C: "{label} борми?",
 }
 
+FAMILY_GATE_PROMPT = {
+    L: "Ota-onangiz, aka-uka, opa-singillaringiz sizlar bilan bitta manzilda "
+       "(turar joyda) yashaydimi?",
+    C: "Ота-онангиз, ака-ука, опа-сингилларингиз сизлар билан битта манзилда "
+       "(турар жойда) яшайдими?",
+}
+SPOUSE_GATE_PROMPT = {
+    L: "Turmush o'rtog'ingiz va farzandlaringiz siz bilan bitta manzilda yashaydimi?",
+    C: "Турмуш ўртоғингиз ва фарзандларингиз сиз билан битта манзилда яшайдими?",
+}
+SHARED_ADDRESS_ASK = {
+    L: "Manzilni ayting (bu manzil tegishli barcha qarindoshlar uchun avtomatik ishlatiladi):",
+    C: "Манзилни айтинг (бу манзил тегишли барча қариндошлар учун автоматик ишлатилади):",
+}
+
 GENDER_PROMPT = {
     L: "Farzandingiz qiz bolami yoki o'g'il bolami?",
     C: "Фарзандингиз қиз болами ёки ўғил болами?",
@@ -258,6 +273,7 @@ GENDER_LABELS = {
 # ---------------------------------------------------------------------------
 BTN_CONFIRM = {L: "✅ Tasdiqlash", C: "✅ Тасдиқлаш"}
 BTN_EDIT = {L: "✏️ Qayta yozish", C: "✏️ Қайта ёзиш"}
+BTN_COPY = {L: "📋 Nusxalab, tuzatish", C: "📋 Нусхалаб, тузатиш"}
 BTN_QUICK_NO = {L: "❌ Yo'q", C: "❌ Йўқ"}
 BTN_YES = {L: "✅ Bor", C: "✅ Бор"}
 BTN_NO = {L: "❌ Yo'q", C: "❌ Йўқ"}
@@ -299,6 +315,28 @@ GENERATING = {
 DONE_MSG = {
     L: "✅ Ob'ektivkangiz tayyor! Qayta boshlash uchun /start buyrug'ini yuboring.",
     C: "✅ Объективкангиз тайёр! Қайта бошлаш учун /start буйруғини юборинг.",
+}
+DOC_ERROR_MSG = {
+    L: "❌ Kechirasiz, hujjatni tayyorlashda xatolik yuz berdi (ehtimol rasm "
+       "buzilgan yoki internet uzilib qolgan). Iltimos, rasmni qaytadan yuboring.",
+    C: "❌ Кечирасиз, ҳужжатни тайёрлашда хатолик юз берди (эҳтимол расм "
+       "бузилган ёки интернет узилиб қолган). Илтимос, расмни қайтадан юборинг.",
+}
+GENERIC_ERROR_MSG = {
+    L: "❌ Kutilmagan xatolik yuz berdi. Iltimos, /start bilan qaytadan boshlang.",
+    C: "❌ Кутилмаган хатолик юз берди. Илтимос, /start билан қайтадан бошланг.",
+}
+SESSION_LOST_MSG = {
+    L: "⚠️ Kechirasiz, sessiya (suhbat holati) uzilib qoldi — server internet "
+       "yoki qayta ishga tushish sababli ma'lumotlaringizni yo'qotib qo'ydi. "
+       "Iltimos, /start bilan qaytadan boshlang.",
+    C: "⚠️ Кечирасиз, сессия (суҳбат ҳолати) узилиб қолди — сервер интернет "
+       "ёки қайта ишга тушиш сабабли маълумотларингизни йўқотиб қўйди. "
+       "Илтимос, /start билан қайтадан бошланг.",
+}
+NOT_STARTED_MSG = {
+    L: "Boshlash uchun /start buyrug'ini yuboring.",
+    C: "Бошлаш учун /start буйруғини юборинг.",
 }
 START_PROMPT = "Assalomu alaykum! Men sizga ob'ektivka (МАЪЛУМОТНОМА) tayyorlashda yordam beraman.\nQaysi tilda ish olib boramiz?"
 NOT_VOICE_OR_TEXT = {

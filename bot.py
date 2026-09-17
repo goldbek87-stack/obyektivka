@@ -12,7 +12,7 @@ import uuid
 import asyncio
 
 from aiohttp import web
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton
 from telegram.ext import (
     Application, ContextTypes, CommandHandler, MessageHandler,
     CallbackQueryHandler, filters,
@@ -46,10 +46,44 @@ def reset_user(context: ContextTypes.DEFAULT_TYPE):
     context.user_data["relatives"] = []
     context.user_data["step_idx"] = 0
     context.user_data["phase"] = "lang"
+    context.user_data["awaiting"] = None
+    context.user_data["has_spouse"] = False
+    context.user_data["family_shared_address"] = None
+    context.user_data["spouse_shared_address"] = None
 
 
 def lang_of(context) -> str:
     return context.user_data.get("lang", T.L)
+
+
+_LOWERCASE_SUFFIXES = {"o'g'li", "o’g’li", "qizi", "ўғли", "қизи"}
+
+
+def smart_capitalize_name(text: str) -> str:
+    """Ism-familiya kabi maydonlarda har bir so'zning birinchi harfini
+    katta qiladi, "o'g'li"/"qizi" kabi qo'shimchalarni kichik holicha qoldiradi."""
+    words = text.strip().split()
+    out = []
+    for w in words:
+        if w.lower() in _LOWERCASE_SUFFIXES:
+            out.append(w.lower())
+        elif w:
+            out.append(w[0].upper() + w[1:])
+        else:
+            out.append(w)
+    return " ".join(out)
+
+
+_FAMILY_GROUP_KEYS = {"ota", "ona", "aka", "uka", "opa", "singil"}
+_SPOUSE_GROUP_KEYS = {"spouse", "farzand"}
+
+
+def shared_address_for(rel_key: str, context: ContextTypes.DEFAULT_TYPE):
+    if rel_key in _FAMILY_GROUP_KEYS:
+        return context.user_data.get("family_shared_address")
+    if rel_key in _SPOUSE_GROUP_KEYS:
+        return context.user_data.get("spouse_shared_address")
+    return None
 
 
 # ============================== START / LANG ================================
@@ -113,7 +147,10 @@ async def on_quick_no(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = lang_of(context)
     phase = context.user_data.get("phase")
-    if phase in (None, "lang", "photo", "done"):
+    if phase is None:
+        await update.message.reply_text(T.NOT_STARTED_MSG[lang])
+        return
+    if phase in ("lang", "photo", "done"):
         return
 
     voice = update.message.voice or update.message.audio
@@ -140,14 +177,20 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["pending_text"] = text
     await update.message.reply_text(
         T.CONFIRM_PREVIEW[lang].format(text=text),
-        reply_markup=kb([(T.BTN_CONFIRM[lang], "confirm"), (T.BTN_EDIT[lang], "edit")]),
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(T.BTN_CONFIRM[lang], callback_data="confirm")],
+            [InlineKeyboardButton(T.BTN_COPY[lang], copy_text=CopyTextButton(text=text))],
+        ]),
     )
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phase = context.user_data.get("phase")
     lang = lang_of(context)
-    if phase in (None, "lang", "photo", "done"):
+    if phase is None:
+        await update.message.reply_text(T.NOT_STARTED_MSG[lang])
+        return
+    if phase in ("lang", "photo", "done"):
         return
 
     text = update.message.text.strip()
@@ -184,11 +227,25 @@ async def save_answer_and_advance(target, context: ContextTypes.DEFAULT_TYPE, te
     target: Update (matn holatida) yoki CallbackQuery (tasdiqlash holatida) —
     ikkalasida ham .message orqali javob yozish mumkin.
     """
+    awaiting = context.user_data.get("awaiting")
+    if awaiting == "family_address":
+        context.user_data["family_shared_address"] = text
+        context.user_data["awaiting"] = None
+        await start_relative_category(target, context)
+        return
+    if awaiting == "spouse_address":
+        context.user_data["spouse_shared_address"] = text
+        context.user_data["awaiting"] = None
+        await begin_relative_entry(target, context)
+        return
+
     phase = context.user_data.get("phase")
 
     if phase == "simple":
         idx = context.user_data["step_idx"]
         key = T.SIMPLE_STEPS[idx]["key"]
+        if key == "fio":
+            text = smart_capitalize_name(text)
         context.user_data["data"][key] = text
         context.user_data["step_idx"] += 1
         await ask_current_simple_step(target, context)
@@ -253,6 +310,27 @@ async def on_mehnat_more(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["relatives"] = context.user_data.get("relatives", [])
         lang = lang_of(context)
         await query.message.reply_text(T.RELATIVES_INTRO[lang])
+        await ask_family_gate(query, context)
+
+
+async def ask_family_gate(target, context: ContextTypes.DEFAULT_TYPE):
+    lang = lang_of(context)
+    await target.message.reply_text(
+        T.FAMILY_GATE_PROMPT[lang],
+        reply_markup=kb([(T.BTN_YES[lang], "famgate_yes"), (T.BTN_NO[lang], "famgate_no")]),
+    )
+
+
+async def on_family_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    lang = lang_of(context)
+    if query.data == "famgate_yes":
+        context.user_data["awaiting"] = "family_address"
+        text = T.SHARED_ADDRESS_ASK[lang] + T.ASK_VOICE_HINT[lang]
+        await query.message.reply_text(text)
+    else:
+        context.user_data["family_shared_address"] = None
         await start_relative_category(query, context)
 
 
@@ -315,6 +393,12 @@ async def ask_relative_field(target, context: ContextTypes.DEFAULT_TYPE):
     field_keys = ["fio", "tug", "ish", "turar"]
     fkey = field_keys[sub]
 
+    if fkey == "turar":
+        shared = shared_address_for(spec["key"], context)
+        if shared:
+            await relative_save_field(target, context, shared)
+            return
+
     label = context.user_data.get("current_relative_label")
     if not label:
         label = spec["label"][0] if lang == T.L else spec["label"][1]
@@ -333,12 +417,39 @@ async def on_presence(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if spec.get("is_spouse_gate"):
         context.user_data["has_spouse"] = (query.data == "presence_yes")
+        if query.data == "presence_yes":
+            await ask_spouse_gate(query, context)
+        else:
+            context.user_data["rel_cat_idx"] += 1
+            await start_relative_category(query, context)
+        return
 
     if query.data == "presence_yes":
         await begin_relative_entry(query, context)
     else:
         context.user_data["rel_cat_idx"] += 1
         await start_relative_category(query, context)
+
+
+async def ask_spouse_gate(target, context: ContextTypes.DEFAULT_TYPE):
+    lang = lang_of(context)
+    await target.message.reply_text(
+        T.SPOUSE_GATE_PROMPT[lang],
+        reply_markup=kb([(T.BTN_YES[lang], "spgate_yes"), (T.BTN_NO[lang], "spgate_no")]),
+    )
+
+
+async def on_spouse_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    lang = lang_of(context)
+    if query.data == "spgate_yes":
+        context.user_data["awaiting"] = "spouse_address"
+        text = T.SHARED_ADDRESS_ASK[lang] + T.ASK_VOICE_HINT[lang]
+        await query.message.reply_text(text)
+    else:
+        context.user_data["spouse_shared_address"] = None
+        await begin_relative_entry(query, context)
 
 
 async def on_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -360,6 +471,8 @@ async def relative_save_field(target, context: ContextTypes.DEFAULT_TYPE, text: 
     sub = context.user_data["rel_field_sub"]
     field_keys = ["fio", "tug", "ish", "turar"]
     fkey = field_keys[sub]
+    if fkey == "fio":
+        text = smart_capitalize_name(text)
     context.user_data["current_relative"][fkey] = text
     sub += 1
 
@@ -415,32 +528,55 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("phase") != "photo":
         return
 
-    photo = update.message.photo[-1]
-    tg_file = await context.bot.get_file(photo.file_id)
-    photo_path = os.path.join(TMP_DIR, f"{uuid.uuid4().hex}.jpg")
-    await tg_file.download_to_drive(photo_path)
+    if "data" not in context.user_data:
+        # Sessiya (masalan server qayta ishga tushgani sababli) yo'qolgan
+        await update.message.reply_text(T.SESSION_LOST_MSG[lang])
+        context.user_data.clear()
+        return
 
-    await update.message.reply_text(T.GENERATING[lang])
+    photo_path = None
+    out_path = None
+    try:
+        photo = update.message.photo[-1]
+        tg_file = await context.bot.get_file(photo.file_id)
+        photo_path = os.path.join(TMP_DIR, f"{uuid.uuid4().hex}.jpg")
+        await tg_file.download_to_drive(photo_path)
 
-    out_path = build_document(
-        lang=lang,
-        data=context.user_data["data"],
-        mehnat=context.user_data["mehnat"],
-        relatives=context.user_data["relatives"],
-        photo_path=photo_path,
-    )
+        await update.message.reply_text(T.GENERATING[lang])
 
-    with open(out_path, "rb") as f:
-        await update.message.reply_document(f, filename=os.path.basename(out_path))
+        out_path = build_document(
+            lang=lang,
+            data=context.user_data["data"],
+            mehnat=context.user_data["mehnat"],
+            relatives=context.user_data["relatives"],
+            photo_path=photo_path,
+        )
 
-    await update.message.reply_text(T.DONE_MSG[lang])
-    context.user_data["phase"] = "done"
+        with open(out_path, "rb") as f:
+            await update.message.reply_document(f, filename=os.path.basename(out_path))
 
-    for p in (photo_path, out_path):
-        try:
-            os.remove(p)
-        except OSError:
-            pass
+        await update.message.reply_text(T.DONE_MSG[lang])
+        context.user_data["phase"] = "done"
+    except Exception:
+        logger.exception("Hujjat tayyorlashda xatolik")
+        await update.message.reply_text(T.DOC_ERROR_MSG[lang])
+    finally:
+        for p in (photo_path, out_path):
+            if p:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+
+
+async def on_error(update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error("Kutilmagan xatolik: %s", context.error, exc_info=context.error)
+    try:
+        if isinstance(update, Update) and update.effective_message:
+            lang = lang_of(context)
+            await update.effective_message.reply_text(T.GENERIC_ERROR_MSG[lang])
+    except Exception:
+        pass
 
 
 async def photo_phase_wrong_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -459,8 +595,19 @@ async def telegram_webhook_handler(request):
     application = request.app["telegram_app"]
     data = await request.json()
     update = Update.de_json(data, application.bot)
-    await application.process_update(update)
+    # Telegram'ga darhol "OK" javobini qaytaramiz, so'ng update'ni fonda
+    # qayta ishlaymiz. Aks holda ovozni tanish/hujjat tayyorlash vaqt olgani
+    # uchun Telegram javobni kutmasdan bir xil xabarni qayta-qayta yuborishi
+    # (va shu orqali sessiya holatida g'alati chalkashliklar chiqishi) mumkin edi.
+    asyncio.create_task(_process_update_safely(application, update))
     return web.Response(text="OK")
+
+
+async def _process_update_safely(application: Application, update: Update):
+    try:
+        await application.process_update(update)
+    except Exception:
+        logger.exception("Update'ni qayta ishlashda xatolik")
 
 
 async def run_webhook_mode(application: Application):
@@ -504,6 +651,8 @@ def build_application() -> Application:
     app.add_handler(CallbackQueryHandler(on_confirm, pattern="^confirm$"))
     app.add_handler(CallbackQueryHandler(on_edit, pattern="^edit$"))
     app.add_handler(CallbackQueryHandler(on_mehnat_more, pattern="^mehnat_more_"))
+    app.add_handler(CallbackQueryHandler(on_family_gate, pattern="^famgate_"))
+    app.add_handler(CallbackQueryHandler(on_spouse_gate, pattern="^spgate_"))
     app.add_handler(CallbackQueryHandler(on_presence, pattern="^presence_"))
     app.add_handler(CallbackQueryHandler(on_gender, pattern="^gender_"))
     app.add_handler(CallbackQueryHandler(on_relative_more, pattern="^rel_more_"))
@@ -514,6 +663,7 @@ def build_application() -> Application:
         filters.Document.ALL & ~filters.COMMAND, photo_phase_wrong_type
     ))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_error_handler(on_error)
     return app
 
 
