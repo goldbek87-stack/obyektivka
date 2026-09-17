@@ -19,7 +19,20 @@ from texts import (
 from config import OUTPUT_DIR
 
 FONT_NAME = "Times New Roman"
-FONT_SIZE = Pt(12)
+FONT_SIZE = Pt(14)
+
+# Asl namunadagi kabi: bu maydonlar ikkitadan bitta qatorga ("juft ustun",
+# tab bilan ajratilgan) chiqadi.
+PAIR_KEYS = [
+    ("tug_yili", "tug_joyi"),
+    ("millati", "partiya"),
+    ("malumoti", "tamomlagan"),
+    ("ilmiy_daraja", "ilmiy_unvon"),
+]
+# Bular esa asl namunadagidek to'liq bitta qatorda ("Label: qiymat"):
+SINGLE_KEYS = ["mutaxassis", "chet_til", "mukofot", "deputat"]
+
+TAB_POSITION = Cm(8.5)
 
 
 def _set_font(run, size=FONT_SIZE, bold=False):
@@ -44,13 +57,21 @@ def _add_paragraph(doc, text="", align=None, bold=False, size=FONT_SIZE, space_a
     return p
 
 
-def _add_label_value(doc, label, value):
+def _add_pair_line(doc, left_text, right_text, bold=False, space_after=0):
+    """Asl namunadagidek: ikkita qism bitta qatorda, tab bilan tekislangan."""
     p = doc.add_paragraph()
-    p.paragraph_format.space_after = Pt(3)
-    r1 = p.add_run(f"{label}: ")
-    _set_font(r1, bold=True)
-    r2 = p.add_run(value if value else "—")
-    _set_font(r2, bold=False)
+    p.paragraph_format.space_after = Pt(space_after)
+    p.paragraph_format.tab_stops.add_tab_stop(TAB_POSITION)
+    r = p.add_run(f"{left_text}\t{right_text}")
+    _set_font(r, bold=bold)
+    return p
+
+
+def _add_single_line(doc, label, value, space_after=3):
+    p = doc.add_paragraph()
+    p.paragraph_format.space_after = Pt(space_after)
+    r = p.add_run(f"{label}: {value if value else '—'}")
+    _set_font(r)
     return p
 
 
@@ -133,17 +154,25 @@ def build_document(lang: str, data: dict, mehnat: list, relatives: list,
     doc.add_paragraph().paragraph_format.space_after = Pt(6)
 
     # --- Oddiy maydonlar ---
-    for step in SIMPLE_STEPS:
-        if step.get("is_header"):
-            continue
-        key = step["key"]
-        label = step["label"][0] if lang == L else step["label"][1]
-        value = data.get(key, "")
-        _add_label_value(doc, label, value)
+    step_labels = {s["key"]: s["label"] for s in SIMPLE_STEPS}
+
+    def label_of(key):
+        return step_labels[key][0] if lang == L else step_labels[key][1]
+
+    for k1, k2 in PAIR_KEYS:
+        _add_pair_line(doc, f"{label_of(k1)}:", f"{label_of(k2)}:", space_after=0)
+        v1 = data.get(k1, "") or "—"
+        v2 = data.get(k2, "") or "—"
+        _add_pair_line(doc, v1, v2, space_after=6)
+        if k1 == "malumoti":
+            _add_single_line(doc, label_of("mutaxassis"), data.get("mutaxassis", ""))
+
+    for key in ("chet_til", "mukofot", "deputat"):
+        _add_single_line(doc, label_of(key), data.get(key, ""))
 
     # --- Mehnat faoliyati ---
     doc.add_paragraph().paragraph_format.space_after = Pt(4)
-    _add_paragraph(doc, MEHNAT_HEADING[lang], bold=True, size=Pt(13), space_after=6)
+    _add_paragraph(doc, MEHNAT_HEADING[lang], bold=True, space_after=6)
     if not mehnat:
         _add_paragraph(doc, QUICK_NO_TEXT[lang].capitalize(), space_after=3)
     yy = "yy." if lang == L else "йй."
@@ -158,7 +187,7 @@ def build_document(lang: str, data: dict, mehnat: list, relatives: list,
     doc.add_paragraph().paragraph_format.space_after = Pt(4)
     heading_lines = (f"{fio}ning " if lang == L else f"{fio}нинг ") + RELATIVES_HEADING[lang]
     for line in heading_lines.split("\n"):
-        _add_paragraph(doc, line, align=WD_ALIGN_PARAGRAPH.CENTER, bold=True, size=Pt(13), space_after=2)
+        _add_paragraph(doc, line, align=WD_ALIGN_PARAGRAPH.CENTER, bold=True, space_after=2)
 
     headers = TABLE_HEADERS[lang]
     rel_table = doc.add_table(rows=1, cols=len(headers))
