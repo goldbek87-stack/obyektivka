@@ -52,6 +52,61 @@ def reset_user(context: ContextTypes.DEFAULT_TYPE):
     context.user_data["spouse_shared_address"] = None
 
 
+_LOTIN_KIRILL_MULTI = {
+    "sh": "ш", "ch": "ч", "ts": "ц", "yo": "ё", "yu": "ю", "ya": "я",
+}
+_LOTIN_KIRILL_SINGLE = {
+    "a": "а", "b": "б", "d": "д", "e": "е", "f": "ф", "g": "г", "h": "ҳ",
+    "i": "и", "j": "ж", "k": "к", "l": "л", "m": "м", "n": "н", "o": "о",
+    "p": "п", "q": "қ", "r": "р", "s": "с", "t": "т", "u": "у", "v": "в",
+    "x": "х", "y": "й", "z": "з",
+}
+_APOSTROPHE_VARIANTS = ["’", "‘", "ʻ", "ʼ", "`", "´"]
+
+
+def lotin_to_kirill(text: str) -> str:
+    """Lotin yozuvidagi o'zbekcha matnni kirill yozuviga o'giradi.
+    Allaqachon kirillcha yoki boshqa (raqam, tinish belgisi) belgilar
+    o'zgarishsiz qoladi — shuning uchun aralash matnda ham xavfsiz ishlatsa
+    bo'ladi."""
+    for ap in _APOSTROPHE_VARIANTS:
+        text = text.replace(ap, "'")
+
+    result = []
+    i = 0
+    n = len(text)
+    lower = text.lower()
+    while i < n:
+        ch = text[i]
+        two = lower[i:i + 2]
+        if two == "o'":
+            result.append("Ў" if ch.isupper() else "ў")
+            i += 2
+            continue
+        if two == "g'":
+            result.append("Ғ" if ch.isupper() else "ғ")
+            i += 2
+            continue
+        if two in _LOTIN_KIRILL_MULTI:
+            cyr = _LOTIN_KIRILL_MULTI[two]
+            result.append(cyr.upper() if ch.isupper() else cyr)
+            i += 2
+            continue
+        lc = lower[i]
+        if lc in _LOTIN_KIRILL_SINGLE:
+            cyr = _LOTIN_KIRILL_SINGLE[lc]
+            result.append(cyr.upper() if ch.isupper() else cyr)
+            i += 1
+            continue
+        if ch == "'":
+            result.append("ъ")
+            i += 1
+            continue
+        result.append(ch)
+        i += 1
+    return "".join(result)
+
+
 def lang_of(context) -> str:
     return context.user_data.get("lang", T.L)
 
@@ -180,7 +235,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     waiting = await update.message.reply_text(
         "⏳" if lang == T.L else "⏳"
     )
-    text = transcribe_ogg(ogg_path)
+    text = await asyncio.to_thread(transcribe_ogg, ogg_path)
     try:
         await waiting.delete()
     except Exception:
@@ -190,6 +245,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(T.TRANSCRIBE_FAIL[lang])
         return
 
+    if lang == T.C:
+        text = lotin_to_kirill(text)
     if is_name_field(context):
         text = smart_capitalize_name(text)
 
@@ -246,6 +303,10 @@ async def save_answer_and_advance(target, context: ContextTypes.DEFAULT_TYPE, te
     target: Update (matn holatida) yoki CallbackQuery (tasdiqlash holatida) —
     ikkalasida ham .message orqali javob yozish mumkin.
     """
+    lang = lang_of(context)
+    if lang == T.C:
+        text = lotin_to_kirill(text)
+
     phase = context.user_data.get("phase")
 
     if phase == "simple":
@@ -543,7 +604,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(T.GENERATING[lang])
 
-        out_path = build_document(
+        out_path = await asyncio.to_thread(
+            build_document,
             lang=lang,
             data=context.user_data["data"],
             mehnat=context.user_data["mehnat"],
