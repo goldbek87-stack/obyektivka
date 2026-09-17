@@ -14,7 +14,7 @@ from docx.oxml import OxmlElement
 
 from texts import (
     TITLE, SIMPLE_STEPS, MEHNAT_HEADING, RELATIVES_HEADING, TABLE_HEADERS,
-    RELATIVE_PLAN, L, C,
+    RELATIVE_PLAN, QUICK_NO_TEXT, L, C,
 )
 from config import OUTPUT_DIR
 
@@ -144,6 +144,8 @@ def build_document(lang: str, data: dict, mehnat: list, relatives: list,
     # --- Mehnat faoliyati ---
     doc.add_paragraph().paragraph_format.space_after = Pt(4)
     _add_paragraph(doc, MEHNAT_HEADING[lang], bold=True, size=Pt(13), space_after=6)
+    if not mehnat:
+        _add_paragraph(doc, QUICK_NO_TEXT[lang].capitalize(), space_after=3)
     yy = "yy." if lang == L else "йй."
     for entry in mehnat:
         frm = entry.get("from", "").strip()

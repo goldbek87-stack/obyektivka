@@ -255,8 +255,12 @@ SPOUSE_GATE_PROMPT = {
     C: "Турмуш ўртоғингиз ва фарзандларингиз сиз билан битта манзилда яшайдими?",
 }
 SHARED_ADDRESS_ASK = {
-    L: "Manzilni ayting (bu manzil tegishli barcha qarindoshlar uchun avtomatik ishlatiladi):",
-    C: "Манзилни айтинг (бу манзил тегишли барча қариндошлар учун автоматик ишлатилади):",
+    L: "Manzilni ayting:",
+    C: "Манзилни айтинг:",
+}
+SAME_ADDRESS_PROMPT = {
+    L: "{label} ham shu manzilda yashaydimi?\n\n«{address}»",
+    C: "{label} ҳам шу манзилда яшайдими?\n\n«{address}»",
 }
 
 GENDER_PROMPT = {
@@ -279,6 +283,7 @@ BTN_YES = {L: "✅ Bor", C: "✅ Бор"}
 BTN_NO = {L: "❌ Yo'q", C: "❌ Йўқ"}
 BTN_ADD_MORE = {L: "➕ Ha, qo'shaman", C: "➕ Ҳа, қўшаман"}
 BTN_NO_MORE = {L: "➡️ Yo'q, davom etamiz", C: "➡️ Йўқ, давом этамиз"}
+BTN_MEHNAT_NONE = {L: "❌ Yo'q, ish/o'qish tajribasi yo'q", C: "❌ Йўқ, иш/ўқиш тажрибаси йўқ"}
 BTN_GENDER_QIZ = {L: "👧 Qizi", C: "👧 Қизи"}
 BTN_GENDER_OGIL = {L: "👦 O'g'li", C: "👦 Ўғли"}
 
@@ -295,8 +300,18 @@ TRANSCRIBE_FAIL = {
     C: "Кечирасиз, овозингизни таниб бўлмади. Яна уриниб кўринг ёки матн кўринишида ёзиб юборинг.",
 }
 CONFIRM_PREVIEW = {
-    L: "Shunday tushundim:\n\n«{text}»\n\nTo'g'rimi?",
-    C: "Шундай тушундим:\n\n«{text}»\n\nТўғрими?",
+    L: "Shunday tushundim:\n\n«{text}»\n\n"
+       "✅ To'g'ri bo'lsa — Tasdiqlash tugmasini bosing.\n"
+       "✏️ Xato bo'lsa — pastdagi 📋 tugmani bosing (matn nusxalanadi), "
+       "so'ng shu yerdagi yozish maydoniga BARMOG'INGIZ BILAN BOSIB TURING "
+       "va chiqqan \"Qo'yish\"/\"Paste\" so'zini tanlang, xato joyni "
+       "tuzatib, jo'natish (➤) tugmasini bosing.",
+    C: "Шундай тушундим:\n\n«{text}»\n\n"
+       "✅ Тўғри бўлса — Тасдиқлаш тугмасини босинг.\n"
+       "✏️ Хато бўлса — пастдаги 📋 тугмани босинг (матн нусхаланади), "
+       "сўнг шу ердаги ёзиш майдонига БАРМОҒИНГИЗ БИЛАН БОСИБ ТУРИНГ "
+       "ва чиққан \"Қўйиш\"/\"Paste\" сўзини танланг, хато жойни "
+       "тузатиб, жўнатиш (➤) тугмасини босинг.",
 }
 PHOTO_PROMPT = {
     L: "Deyarli tayyor! 📸 Endi 3x4 (yoki istalgan) rasmingizni surat (photo) "

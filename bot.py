@@ -86,6 +86,22 @@ def shared_address_for(rel_key: str, context: ContextTypes.DEFAULT_TYPE):
     return None
 
 
+def is_name_field(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Hozirgi so'ralayotgan savol F.I.SH. maydonimi (katta harf qoidasi
+    kerakmi) — shuni aniqlaydi, tasdiqlash ko'rgazmasi ham to'g'ri chiqishi uchun."""
+    phase = context.user_data.get("phase")
+    if phase == "simple":
+        idx = context.user_data.get("step_idx", 0)
+        if idx < len(T.SIMPLE_STEPS) and T.SIMPLE_STEPS[idx]["key"] == "fio":
+            return True
+    elif phase == "relative":
+        sub = context.user_data.get("rel_field_sub", 0)
+        field_keys = ["fio", "tug", "ish", "turar"]
+        if sub < len(field_keys) and field_keys[sub] == "fio":
+            return True
+    return False
+
+
 # ============================== START / LANG ================================
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -174,6 +190,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(T.TRANSCRIBE_FAIL[lang])
         return
 
+    if is_name_field(context):
+        text = smart_capitalize_name(text)
+
     context.user_data["pending_text"] = text
     await update.message.reply_text(
         T.CONFIRM_PREVIEW[lang].format(text=text),
@@ -227,18 +246,6 @@ async def save_answer_and_advance(target, context: ContextTypes.DEFAULT_TYPE, te
     target: Update (matn holatida) yoki CallbackQuery (tasdiqlash holatida) —
     ikkalasida ham .message orqali javob yozish mumkin.
     """
-    awaiting = context.user_data.get("awaiting")
-    if awaiting == "family_address":
-        context.user_data["family_shared_address"] = text
-        context.user_data["awaiting"] = None
-        await start_relative_category(target, context)
-        return
-    if awaiting == "spouse_address":
-        context.user_data["spouse_shared_address"] = text
-        context.user_data["awaiting"] = None
-        await begin_relative_entry(target, context)
-        return
-
     phase = context.user_data.get("phase")
 
     if phase == "simple":
@@ -275,7 +282,10 @@ async def ask_mehnat_field(target, context: ContextTypes.DEFAULT_TYPE):
     sub = context.user_data["mehnat_sub"]
     prompts = [T.MEHNAT_FROM_PROMPT, T.MEHNAT_TO_PROMPT, T.MEHNAT_PLACE_PROMPT]
     text = prompts[sub][lang] + T.ASK_VOICE_HINT[lang]
-    await target.message.reply_text(text)
+    reply_markup = None
+    if sub == 0 and not context.user_data.get("mehnat"):
+        reply_markup = kb([(T.BTN_MEHNAT_NONE[lang], "mehnat_none")])
+    await target.message.reply_text(text, reply_markup=reply_markup)
 
 
 async def mehnat_save_field(target, context: ContextTypes.DEFAULT_TYPE, text: str):
@@ -305,33 +315,23 @@ async def on_mehnat_more(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "mehnat_more_yes":
         await ask_mehnat_field(query, context)
     else:
-        context.user_data["phase"] = "relative"
-        context.user_data["rel_cat_idx"] = 0
-        context.user_data["relatives"] = context.user_data.get("relatives", [])
-        lang = lang_of(context)
-        await query.message.reply_text(T.RELATIVES_INTRO[lang])
-        await ask_family_gate(query, context)
+        await finish_mehnat_and_start_relatives(query, context)
 
 
-async def ask_family_gate(target, context: ContextTypes.DEFAULT_TYPE):
-    lang = lang_of(context)
-    await target.message.reply_text(
-        T.FAMILY_GATE_PROMPT[lang],
-        reply_markup=kb([(T.BTN_YES[lang], "famgate_yes"), (T.BTN_NO[lang], "famgate_no")]),
-    )
-
-
-async def on_family_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def on_mehnat_none(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    context.user_data["mehnat"] = []
+    await finish_mehnat_and_start_relatives(query, context)
+
+
+async def finish_mehnat_and_start_relatives(target, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["phase"] = "relative"
+    context.user_data["rel_cat_idx"] = 0
+    context.user_data["relatives"] = context.user_data.get("relatives", [])
     lang = lang_of(context)
-    if query.data == "famgate_yes":
-        context.user_data["awaiting"] = "family_address"
-        text = T.SHARED_ADDRESS_ASK[lang] + T.ASK_VOICE_HINT[lang]
-        await query.message.reply_text(text)
-    else:
-        context.user_data["family_shared_address"] = None
-        await start_relative_category(query, context)
+    await target.message.reply_text(T.RELATIVES_INTRO[lang])
+    await start_relative_category(target, context)
 
 
 # ============================== QARINDOSHLAR =================================
@@ -393,19 +393,40 @@ async def ask_relative_field(target, context: ContextTypes.DEFAULT_TYPE):
     field_keys = ["fio", "tug", "ish", "turar"]
     fkey = field_keys[sub]
 
-    if fkey == "turar":
-        shared = shared_address_for(spec["key"], context)
-        if shared:
-            await relative_save_field(target, context, shared)
-            return
-
     label = context.user_data.get("current_relative_label")
     if not label:
         label = spec["label"][0] if lang == T.L else spec["label"][1]
 
+    if fkey == "turar":
+        last_addr = shared_address_for(spec["key"], context)
+        if last_addr:
+            text = T.SAME_ADDRESS_PROMPT[lang].format(label=label, address=last_addr)
+            await target.message.reply_text(
+                text,
+                reply_markup=kb([(T.BTN_YES[lang], "sameaddr_yes"), (T.BTN_NO[lang], "sameaddr_no")]),
+            )
+            return
+
     prompt = T.REL_FIELD_PROMPTS[fkey][lang].format(label=label)
     text = prompt + T.ASK_VOICE_HINT[lang]
     await target.message.reply_text(text)
+
+
+async def on_same_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    lang = lang_of(context)
+    spec = _current_spec(context)
+    if query.data == "sameaddr_yes":
+        last_addr = shared_address_for(spec["key"], context)
+        await relative_save_field(query, context, last_addr)
+    else:
+        label = context.user_data.get("current_relative_label")
+        if not label:
+            label = spec["label"][0] if lang == T.L else spec["label"][1]
+        prompt = T.REL_FIELD_PROMPTS["turar"][lang].format(label=label)
+        text = prompt + T.ASK_VOICE_HINT[lang]
+        await query.message.reply_text(text)
 
 
 async def on_presence(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -417,39 +438,12 @@ async def on_presence(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if spec.get("is_spouse_gate"):
         context.user_data["has_spouse"] = (query.data == "presence_yes")
-        if query.data == "presence_yes":
-            await ask_spouse_gate(query, context)
-        else:
-            context.user_data["rel_cat_idx"] += 1
-            await start_relative_category(query, context)
-        return
 
     if query.data == "presence_yes":
         await begin_relative_entry(query, context)
     else:
         context.user_data["rel_cat_idx"] += 1
         await start_relative_category(query, context)
-
-
-async def ask_spouse_gate(target, context: ContextTypes.DEFAULT_TYPE):
-    lang = lang_of(context)
-    await target.message.reply_text(
-        T.SPOUSE_GATE_PROMPT[lang],
-        reply_markup=kb([(T.BTN_YES[lang], "spgate_yes"), (T.BTN_NO[lang], "spgate_no")]),
-    )
-
-
-async def on_spouse_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    lang = lang_of(context)
-    if query.data == "spgate_yes":
-        context.user_data["awaiting"] = "spouse_address"
-        text = T.SHARED_ADDRESS_ASK[lang] + T.ASK_VOICE_HINT[lang]
-        await query.message.reply_text(text)
-    else:
-        context.user_data["spouse_shared_address"] = None
-        await begin_relative_entry(query, context)
 
 
 async def on_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -473,6 +467,11 @@ async def relative_save_field(target, context: ContextTypes.DEFAULT_TYPE, text: 
     fkey = field_keys[sub]
     if fkey == "fio":
         text = smart_capitalize_name(text)
+    if fkey == "turar":
+        if spec["key"] in _FAMILY_GROUP_KEYS:
+            context.user_data["family_shared_address"] = text
+        elif spec["key"] in _SPOUSE_GROUP_KEYS:
+            context.user_data["spouse_shared_address"] = text
     context.user_data["current_relative"][fkey] = text
     sub += 1
 
@@ -651,9 +650,9 @@ def build_application() -> Application:
     app.add_handler(CallbackQueryHandler(on_confirm, pattern="^confirm$"))
     app.add_handler(CallbackQueryHandler(on_edit, pattern="^edit$"))
     app.add_handler(CallbackQueryHandler(on_mehnat_more, pattern="^mehnat_more_"))
-    app.add_handler(CallbackQueryHandler(on_family_gate, pattern="^famgate_"))
-    app.add_handler(CallbackQueryHandler(on_spouse_gate, pattern="^spgate_"))
+    app.add_handler(CallbackQueryHandler(on_mehnat_none, pattern="^mehnat_none$"))
     app.add_handler(CallbackQueryHandler(on_presence, pattern="^presence_"))
+    app.add_handler(CallbackQueryHandler(on_same_address, pattern="^sameaddr_"))
     app.add_handler(CallbackQueryHandler(on_gender, pattern="^gender_"))
     app.add_handler(CallbackQueryHandler(on_relative_more, pattern="^rel_more_"))
 
