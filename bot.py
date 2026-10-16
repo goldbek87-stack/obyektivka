@@ -23,6 +23,55 @@ from transcribe import transcribe_ogg
 from doc_builder import build_document
 import texts as T
 
+# ============================== TO'LOV SOZLAMALARI ===========================
+# Bularni .env faylga yoki Render -> Environment bo'limiga yozing:
+#   ADMIN_ID=123456789        (sizning Telegram ID'ingiz)
+#   CARD_NUMBER=8600 1234 5678 9012
+#   CARD_OWNER=ISM FAMILIYA
+#   PRICE_TEXT=10 000         (so'mda, ko'rinishi uchun)
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0") or 0)
+CARD_NUMBER = os.getenv("CARD_NUMBER", "").strip()
+CARD_OWNER = os.getenv("CARD_OWNER", "").strip()
+PRICE_TEXT = os.getenv("PRICE_TEXT", "10 000").strip()
+
+PAY_MSG = {
+    T.L: (
+        "✅ Obyektivkangiz tayyor!\n\n"
+        "Uni yuklab olish uchun to'lov qiling:\n"
+        "💵 Narxi: {price} so'm\n"
+        "💳 Karta: {card}\n"
+        "👤 {owner}\n\n"
+        "To'lovni qilgach, chek (skrinshot) rasmini shu yerga yuboring. "
+        "To'lov tasdiqlangach, Word fayl yuboriladi."
+    ),
+    T.C: (
+        "✅ Объективкангиз тайёр!\n\n"
+        "Уни юклаб олиш учун тўлов қилинг:\n"
+        "💵 Нархи: {price} сўм\n"
+        "💳 Карта: {card}\n"
+        "👤 {owner}\n\n"
+        "Тўловни қилгач, чек (скриншот) расмини шу ерга юборинг. "
+        "Тўлов тасдиқлангач, Word файл юборилади."
+    ),
+}
+BTN_COPY_CARD = {T.L: "📋 Karta raqamini nusxalash", T.C: "📋 Карта рақамини нусхалаш"}
+RECEIPT_HINT = {
+    T.L: "Iltimos, to'lov chekining rasmini (skrinshot) yuboring.",
+    T.C: "Илтимос, тўлов чекининг расмини (скриншот) юборинг.",
+}
+WAIT_MSG = {
+    T.L: "⏳ Chekingiz yuborildi. To'lov tekshirilib, tasdiqlangach Word fayl shu yerga keladi.",
+    T.C: "⏳ Чекингиз юборилди. Тўлов текширилиб, тасдиқлангач Word файл шу ерга келади.",
+}
+WAITING_HINT = {
+    T.L: "⏳ To'lovingiz tekshirilmoqda, biroz kuting.",
+    T.C: "⏳ Тўловингиз текширилмоқда, бироз кутинг.",
+}
+REJECT_MSG = {
+    T.L: "❌ To'lov tasdiqlanmadi. Iltimos, to'lovni tekshirib, to'g'ri chek rasmini qayta yuboring.",
+    T.C: "❌ Тўлов тасдиқланмади. Илтимос, тўловни текшириб, тўғри чек расмини қайта юборинг.",
+}
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -221,6 +270,11 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if phase is None:
         await update.message.reply_text(T.NOT_STARTED_MSG[lang])
         return
+    if phase in ("payment", "waiting"):
+        await update.message.reply_text(
+            RECEIPT_HINT[lang] if phase == "payment" else WAITING_HINT[lang]
+        )
+        return
     if phase in ("lang", "photo", "done"):
         return
 
@@ -265,6 +319,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = lang_of(context)
     if phase is None:
         await update.message.reply_text(T.NOT_STARTED_MSG[lang])
+        return
+    if phase in ("payment", "waiting"):
+        await update.message.reply_text(
+            RECEIPT_HINT[lang] if phase == "payment" else WAITING_HINT[lang]
+        )
         return
     if phase in ("lang", "photo", "done"):
         return
@@ -585,7 +644,15 @@ async def on_relative_more(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = lang_of(context)
-    if context.user_data.get("phase") != "photo":
+    phase = context.user_data.get("phase")
+
+    if phase == "payment":
+        await handle_receipt(update, context)
+        return
+    if phase == "waiting":
+        await update.message.reply_text(WAITING_HINT[lang])
+        return
+    if phase != "photo":
         return
 
     if "data" not in context.user_data:
@@ -596,6 +663,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     photo_path = None
     out_path = None
+    ok = False
     try:
         photo = update.message.photo[-1]
         tg_file = await context.bot.get_file(photo.file_id)
@@ -613,21 +681,133 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             photo_path=photo_path,
         )
 
-        with open(out_path, "rb") as f:
-            await update.message.reply_document(f, filename=os.path.basename(out_path))
+        # Hujjat tayyor, lekin hali foydalanuvchiga BERILMAYDI -
+        # avval to'lov qilinishi va admin tasdiqlashi kerak.
+        context.user_data["doc_path"] = out_path
+        context.user_data["phase"] = "payment"
+        ok = True
 
-        await update.message.reply_text(T.DONE_MSG[lang])
-        context.user_data["phase"] = "done"
+        await update.message.reply_text(
+            PAY_MSG[lang].format(price=PRICE_TEXT, card=CARD_NUMBER, owner=CARD_OWNER),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    BTN_COPY_CARD[lang],
+                    copy_text=CopyTextButton(text=CARD_NUMBER.replace(" ", "")),
+                )
+            ]]),
+        )
     except Exception:
         logger.exception("Hujjat tayyorlashda xatolik")
         await update.message.reply_text(T.DOC_ERROR_MSG[lang])
     finally:
-        for p in (photo_path, out_path):
+        if photo_path:
+            try:
+                os.remove(photo_path)
+            except OSError:
+                pass
+        if out_path and not ok:
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass
+
+
+async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Foydalanuvchi chek rasmini yubordi -> adminga chek + Word fayl + tugmalar."""
+    lang = lang_of(context)
+    doc_path = context.user_data.get("doc_path")
+    if not doc_path or not os.path.exists(doc_path):
+        await update.message.reply_text(T.SESSION_LOST_MSG[lang])
+        context.user_data.clear()
+        return
+
+    user = update.effective_user
+    uid = user.id
+    receipt = update.message.photo[-1]
+    who = user.full_name + (f" (@{user.username})" if user.username else "")
+
+    try:
+        await context.bot.send_photo(
+            ADMIN_ID,
+            receipt.file_id,
+            caption=f"💰 Yangi to'lov cheki\n👤 {who}\n🆔 {uid}\n💵 {PRICE_TEXT} so'm",
+        )
+        with open(doc_path, "rb") as f:
+            await context.bot.send_document(
+                ADMIN_ID,
+                f,
+                filename=os.path.basename(doc_path),
+                caption=(
+                    f"📄 {who} uchun tayyor obyektivka.\n"
+                    "Pul tushgan bo'lsa ✅ bosing - fayl foydalanuvchiga yuboriladi."
+                ),
+                reply_markup=kb([
+                    ("✅ Tasdiqlash", f"pay_ok_{uid}"),
+                    ("❌ Rad etish", f"pay_no_{uid}"),
+                ]),
+            )
+    except Exception:
+        logger.exception("Adminga yuborib bo'lmadi")
+        await update.message.reply_text(T.GENERIC_ERROR_MSG[lang])
+        return
+
+    context.user_data["phase"] = "waiting"
+    await update.message.reply_text(WAIT_MSG[lang])
+
+
+async def on_payment_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin ✅ yoki ❌ bosdi (callback_data: pay_ok_<uid> / pay_no_<uid>)."""
+    query = update.callback_query
+    if query.from_user.id != ADMIN_ID:
+        await query.answer("Ruxsat yo'q", show_alert=True)
+        return
+    await query.answer()
+
+    _, action, uid_s = query.data.split("_")
+    uid = int(uid_s)
+    udata = context.application.user_data.get(uid)
+    ulang = (udata or {}).get("lang", T.L)
+    old_caption = query.message.caption or ""
+
+    # Ikki marta bosilib ketmasligi uchun tugmalarni darrov olib tashlaymiz
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    if action == "ok":
+        try:
+            await context.bot.send_document(uid, query.message.document.file_id)
+            await context.bot.send_message(uid, T.DONE_MSG[ulang])
+        except Exception:
+            logger.exception("Foydalanuvchiga fayl yuborib bo'lmadi")
+            await query.message.reply_text(
+                f"⚠️ Faylni foydalanuvchiga ({uid}) yuborib bo'lmadi "
+                "(u botni bloklagan bo'lishi mumkin)."
+            )
+            return
+        if udata is not None:
+            p = udata.pop("doc_path", None)
             if p:
                 try:
                     os.remove(p)
                 except OSError:
                     pass
+            udata["phase"] = "done"
+        suffix = "\n\n✅ TASDIQLANDI - fayl yuborildi"
+    else:
+        try:
+            await context.bot.send_message(uid, REJECT_MSG[ulang])
+        except Exception:
+            logger.exception("Foydalanuvchiga xabar yuborib bo'lmadi")
+        if udata is not None and udata.get("doc_path"):
+            udata["phase"] = "payment"   # yangi chek yuborishi mumkin
+        suffix = "\n\n❌ RAD ETILDI"
+
+    try:
+        await query.edit_message_caption(caption=old_caption + suffix)
+    except Exception:
+        pass
 
 
 async def on_error(update, context: ContextTypes.DEFAULT_TYPE):
@@ -641,9 +821,14 @@ async def on_error(update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def photo_phase_wrong_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get("phase") == "photo":
-        lang = lang_of(context)
+    phase = context.user_data.get("phase")
+    lang = lang_of(context)
+    if phase == "photo":
         await update.message.reply_text(T.PHOTO_WAIT_HINT[lang])
+    elif phase == "payment":
+        await update.message.reply_text(RECEIPT_HINT[lang])
+    elif phase == "waiting":
+        await update.message.reply_text(WAITING_HINT[lang])
 
 
 # ============================== MAIN =========================================
@@ -717,6 +902,7 @@ def build_application() -> Application:
     app.add_handler(CallbackQueryHandler(on_same_address, pattern="^sameaddr_"))
     app.add_handler(CallbackQueryHandler(on_gender, pattern="^gender_"))
     app.add_handler(CallbackQueryHandler(on_relative_more, pattern="^rel_more_"))
+    app.add_handler(CallbackQueryHandler(on_payment_decision, pattern=r"^pay_(ok|no)_\d+$"))
 
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
@@ -733,6 +919,12 @@ def main():
         raise RuntimeError(
             "BOT_TOKEN topilmadi. .env faylga BOT_TOKEN=... deb yozing "
             "(.env.example faylga qarang)."
+        )
+
+    if not ADMIN_ID or not CARD_NUMBER:
+        raise RuntimeError(
+            "ADMIN_ID va CARD_NUMBER topilmadi. .env faylga (yoki Render "
+            "Environment'ga) ADMIN_ID, CARD_NUMBER, CARD_OWNER, PRICE_TEXT yozing."
         )
 
     application = build_application()
